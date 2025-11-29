@@ -643,14 +643,14 @@ impl Render for InputExample {
                     .flex()
                     .flex_row()
                     .justify_between()
-                    .child(format!("Keyboard {}", cx.keyboard_layout().name()))
+                    .child(format!("{}", cx.keyboard_layout().name()))
                     .child(
                         div()
                             .border_1()
                             .border_color(black())
                             .px_2()
                             .bg(yellow())
-                            .child("Reset")
+                            .child("Submit")
                             .hover(|style| {
                                 style
                                     .bg(yellow().blend(opaque_grey(0.5, 0.5)))
@@ -660,17 +660,6 @@ impl Render for InputExample {
                     ),
             )
             .child(self.text_input.clone())
-            .children(self.recent_keystrokes.iter().rev().map(|ks| {
-                format!(
-                    "{:} {}",
-                    ks.unparse(),
-                    if let Some(key_char) = ks.key_char.as_ref() {
-                        format!("-> {:?}", key_char)
-                    } else {
-                        "".to_owned()
-                    }
-                )
-            }))
     }
 }
 
@@ -703,7 +692,7 @@ fn main() {
                     let text_input = cx.new(|cx| TextInput {
                         focus_handle: cx.focus_handle(),
                         content: "".into(),
-                        placeholder: "Type here...".into(),
+                        placeholder: "Type away...".into(),
                         selected_range: 0..0,
                         selection_reversed: false,
                         marked_range: None,
