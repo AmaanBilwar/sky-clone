@@ -1,14 +1,8 @@
 use std::ops::Range;
 
-use gpui::{
-    App, Application, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler,
-    Entity, EntityInputHandler, FocusHandle, Focusable, GlobalElementId, KeyBinding, Keystroke,
-    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
-    ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window, WindowBounds,
-    WindowOptions, actions, black, div, fill, hsla, opaque_grey, point, prelude::*, px, relative,
-    rgb, rgba, size, white, yellow,
-};
+use gpui::*;
 use unicode_segmentation::*;
+
 
 actions!(
     text_input,
@@ -650,7 +644,7 @@ impl Render for InputExample {
                             .border_color(black())
                             .px_2()
                             .bg(yellow())
-                            .child("Submit")
+                            .child("Send")
                             .hover(|style| {
                                 style
                                     .bg(yellow().blend(opaque_grey(0.5, 0.5)))
@@ -665,7 +659,7 @@ impl Render for InputExample {
 
 fn main() {
     Application::new().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(300.0), px(300.0)), cx);
+        let bounds = Bounds::centered(None, size(px(800.0), px(300.0)), cx);
         cx.bind_keys([
             KeyBinding::new("backspace", Backspace, None),
             KeyBinding::new("delete", Delete, None),
