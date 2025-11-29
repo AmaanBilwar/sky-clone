@@ -4,5 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1.0.100"
 gpui = { version = "*" }
+rig-core = "0.24.0"
+serde = "1.0.228"
 unicode-segmentation = "1.9.0"
+serde_json = "1.0"
+tracing-subscriber = "0.3.22"
+tokio = "1.48.0"
