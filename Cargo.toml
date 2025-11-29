@@ -1,0 +1,8 @@
+[package]
+name = "sky-clone"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+gpui = { version = "*" }
+unicode-segmentation = "1.9.0"
