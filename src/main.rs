@@ -1,12 +1,19 @@
 use std::ops::Range;
 
-use gpui::*;
+use gpui::{
+    App, Application, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler,
+    Entity, EntityInputHandler, FocusHandle, Focusable, GlobalElementId, KeyBinding, Keystroke,
+    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
+    ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window, WindowBounds,
+    WindowOptions, actions, black, div, fill, hsla, opaque_grey, point, prelude::*, px, relative,
+    rgb, rgba, size, white, yellow,
+};
 use unicode_segmentation::*;
-
 
 actions!(
     text_input,
     [
+        Enter,
         Backspace,
         Delete,
         Left,
@@ -126,6 +133,15 @@ impl TextInput {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
             self.replace_text_in_range(None, &text.replace("\n", " "), window, cx);
         }
+    }
+    fn enter(&mut self, _: &Enter, _: &mut Window, _cx: &mut Context<Self>) {
+        self.content = "".into();
+        self.selected_range = 0..0;
+        self.selection_reversed = false;
+        self.marked_range = None;
+        self.last_layout = None;
+        self.last_bounds = None;
+        self.is_selecting = false;
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
@@ -563,6 +579,7 @@ impl Render for TextInput {
             .key_context("TextInput")
             .track_focus(&self.focus_handle(cx))
             .cursor(CursorStyle::IBeam)
+            .on_action(cx.listener(Self::enter))
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))
             .on_action(cx.listener(Self::left))
@@ -637,14 +654,14 @@ impl Render for InputExample {
                     .flex()
                     .flex_row()
                     .justify_between()
-                    .child(format!("{}", cx.keyboard_layout().name()))
+                    .child(format!("Keyboard {}", cx.keyboard_layout().name()))
                     .child(
                         div()
                             .border_1()
                             .border_color(black())
                             .px_2()
                             .bg(yellow())
-                            .child("Send")
+                            .child("Reset")
                             .hover(|style| {
                                 style
                                     .bg(yellow().blend(opaque_grey(0.5, 0.5)))
@@ -654,6 +671,17 @@ impl Render for InputExample {
                     ),
             )
             .child(self.text_input.clone())
+            .children(self.recent_keystrokes.iter().rev().map(|ks| {
+                format!(
+                    "{:} {}",
+                    ks.unparse(),
+                    if let Some(key_char) = ks.key_char.as_ref() {
+                        format!("-> {:?}", key_char)
+                    } else {
+                        "".to_owned()
+                    }
+                )
+            }))
     }
 }
 
@@ -666,14 +694,21 @@ fn main() {
             KeyBinding::new("left", Left, None),
             KeyBinding::new("right", Right, None),
             KeyBinding::new("shift-left", SelectLeft, None),
+            KeyBinding::new("ctrl-shift-left", SelectLeft, None),
             KeyBinding::new("shift-right", SelectRight, None),
+            KeyBinding::new("ctrl-shift-right", SelectRight, None),
             KeyBinding::new("cmd-a", SelectAll, None),
+            KeyBinding::new("ctrl-a", SelectAll, None),
             KeyBinding::new("cmd-v", Paste, None),
+            KeyBinding::new("ctrl-v", Paste, None),
             KeyBinding::new("cmd-c", Copy, None),
+            KeyBinding::new("ctrl-c", Copy, None),
             KeyBinding::new("cmd-x", Cut, None),
+            KeyBinding::new("ctrl-x", Cut, None),
             KeyBinding::new("home", Home, None),
             KeyBinding::new("end", End, None),
             KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, None),
+            KeyBinding::new("enter", Enter, None),
         ]);
 
         let window = cx
@@ -686,7 +721,7 @@ fn main() {
                     let text_input = cx.new(|cx| TextInput {
                         focus_handle: cx.focus_handle(),
                         content: "".into(),
-                        placeholder: "Type away...".into(),
+                        placeholder: "Type here...".into(),
                         selected_range: 0..0,
                         selection_reversed: false,
                         marked_range: None,
