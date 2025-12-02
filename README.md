@@ -1,8 +1,8 @@
 # Sky Clone (until i come up with a better name)
 
 ## next steps
-- remove typed charaacters showcase
-- once a message is typed and user hits `enter`: 
+- [x] remove typed charaacters showcase
+- [ ] once a message is typed and user hits `enter`: 
 ```rust 
 println!("send message to llm {:?}", user_message);
 ```
