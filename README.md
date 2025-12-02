@@ -1,7 +1,8 @@
 # Sky Clone (until i come up with a better name)
 
 ## next steps
-- [ ] enter button should to terminal: 
+- remove typed charaacters showcase
+- once a message is typed and user hits `enter`: 
 ```rust 
 println!("send message to llm {:?}", user_message);
 ```
