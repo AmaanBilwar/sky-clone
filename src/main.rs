@@ -99,10 +99,10 @@ impl TextInput {
 
     fn delete_all(&mut self, _: &DeleteAll, window: &mut Window, cx: &mut Context<Self>){
         self.move_to(0, cx);
-        self.select_to(self.content.len(), cx);
         if self.selected_range.is_empty() {
             self.select_to(self.previous_boundary(self.cursor_offset()), cx)
         }
+        self.select_to(self.content.len(), cx);
         self.replace_text_in_range(None, "", window, cx);
     }
 
@@ -674,17 +674,6 @@ impl Render for InputExample {
                     ),
             )
             .child(self.text_input.clone())
-            .children(self.recent_keystrokes.iter().rev().map(|ks| {
-                format!(
-                    "{:} {}",
-                    ks.unparse(),
-                    if let Some(key_char) = ks.key_char.as_ref() {
-                        format!("-> {:?}", key_char)
-                    } else {
-                        "".to_owned()
-                    }
-                )
-            }))
     }
 }
 
