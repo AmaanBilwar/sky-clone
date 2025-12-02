@@ -16,6 +16,7 @@ actions!(
         Enter,
         Backspace,
         Delete,
+        DeleteAll,
         Left,
         Right,
         SelectLeft,
@@ -73,6 +74,7 @@ impl TextInput {
         self.select_to(self.content.len(), cx)
     }
 
+
     fn home(&mut self, _: &Home, _: &mut Window, cx: &mut Context<Self>) {
         self.move_to(0, cx);
     }
@@ -93,6 +95,15 @@ impl TextInput {
             self.select_to(self.next_boundary(self.cursor_offset()), cx)
         }
         self.replace_text_in_range(None, "", window, cx)
+    }
+
+    fn delete_all(&mut self, _: &DeleteAll, window: &mut Window, cx: &mut Context<Self>){
+        self.move_to(0, cx);
+        self.select_to(self.content.len(), cx);
+        if self.selected_range.is_empty() {
+            self.select_to(self.previous_boundary(self.cursor_offset()), cx)
+        }
+        self.replace_text_in_range(None, "", window, cx);
     }
 
     fn on_mouse_down(
@@ -120,14 +131,6 @@ impl TextInput {
         }
     }
 
-    fn show_character_palette(
-        &mut self,
-        _: &ShowCharacterPalette,
-        window: &mut Window,
-        _: &mut Context<Self>,
-    ) {
-        window.show_character_palette();
-    }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
@@ -581,6 +584,7 @@ impl Render for TextInput {
             .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::enter))
             .on_action(cx.listener(Self::backspace))
+            .on_action(cx.listener(Self::delete_all))
             .on_action(cx.listener(Self::delete))
             .on_action(cx.listener(Self::left))
             .on_action(cx.listener(Self::right))
@@ -589,7 +593,6 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::select_all))
             .on_action(cx.listener(Self::home))
             .on_action(cx.listener(Self::end))
-            .on_action(cx.listener(Self::show_character_palette))
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::copy))
@@ -690,6 +693,7 @@ fn main() {
         let bounds = Bounds::centered(None, size(px(800.0), px(300.0)), cx);
         cx.bind_keys([
             KeyBinding::new("backspace", Backspace, None),
+            KeyBinding::new("ctrl-backspace", DeleteAll, None),
             KeyBinding::new("delete", Delete, None),
             KeyBinding::new("left", Left, None),
             KeyBinding::new("right", Right, None),
@@ -697,17 +701,12 @@ fn main() {
             KeyBinding::new("ctrl-shift-left", SelectLeft, None),
             KeyBinding::new("shift-right", SelectRight, None),
             KeyBinding::new("ctrl-shift-right", SelectRight, None),
-            KeyBinding::new("cmd-a", SelectAll, None),
             KeyBinding::new("ctrl-a", SelectAll, None),
-            KeyBinding::new("cmd-v", Paste, None),
             KeyBinding::new("ctrl-v", Paste, None),
-            KeyBinding::new("cmd-c", Copy, None),
             KeyBinding::new("ctrl-c", Copy, None),
-            KeyBinding::new("cmd-x", Cut, None),
             KeyBinding::new("ctrl-x", Cut, None),
             KeyBinding::new("home", Home, None),
             KeyBinding::new("end", End, None),
-            KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, None),
             KeyBinding::new("enter", Enter, None),
         ]);
 
@@ -759,6 +758,6 @@ fn main() {
             })
             .unwrap();
         cx.on_action(|_: &Quit, cx| cx.quit());
-        cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
+        cx.bind_keys([KeyBinding::new("ctrl-q", Quit, None)]);
     });
 }
