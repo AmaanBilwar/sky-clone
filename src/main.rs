@@ -1,5 +1,4 @@
-use std::ops::Range;
-
+mod llm;
 use gpui::{
     App, Application, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler,
     Entity, EntityInputHandler, FocusHandle, Focusable, GlobalElementId, KeyBinding, Keystroke,
@@ -8,7 +7,9 @@ use gpui::{
     WindowOptions, actions, black, div, fill, hsla, opaque_grey, point, prelude::*, px, relative,
     rgb, rgba, size, white, yellow,
 };
-use unicode_segmentation::*;
+use llm::send_to_llm;
+use std::ops::Range;
+use unicode_segmentation::UnicodeSegmentation;
 
 actions!(
     text_input,
@@ -74,7 +75,6 @@ impl TextInput {
         self.select_to(self.content.len(), cx)
     }
 
-
     fn home(&mut self, _: &Home, _: &mut Window, cx: &mut Context<Self>) {
         self.move_to(0, cx);
     }
@@ -97,7 +97,7 @@ impl TextInput {
         self.replace_text_in_range(None, "", window, cx)
     }
 
-    fn delete_all(&mut self, _: &DeleteAll, window: &mut Window, cx: &mut Context<Self>){
+    fn delete_all(&mut self, _: &DeleteAll, window: &mut Window, cx: &mut Context<Self>) {
         self.move_to(0, cx);
         if self.selected_range.is_empty() {
             self.select_to(self.previous_boundary(self.cursor_offset()), cx)
@@ -131,20 +131,24 @@ impl TextInput {
         }
     }
 
-
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
             self.replace_text_in_range(None, &text.replace("\n", " "), window, cx);
         }
     }
-    fn enter(&mut self, _: &Enter, _: &mut Window, _cx: &mut Context<Self>) {
-        self.content = "".into();
-        self.selected_range = 0..0;
-        self.selection_reversed = false;
-        self.marked_range = None;
-        self.last_layout = None;
-        self.last_bounds = None;
-        self.is_selecting = false;
+    fn enter(&mut self, _: &Enter, _window: &mut Window, cx: &mut Context<Self>) {
+        // Capture the content before clearing
+        // let user_prompt = self.content.to_string();
+
+        // Clear the input
+        // self.content = "".into();
+        // self.selected_range = 0..0;
+        // self.selection_reversed = false;
+        // self.marked_range = None;
+        let prompt = self.content.to_string();
+        send_to_llm(prompt);
+
+        cx.notify();
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
@@ -725,6 +729,14 @@ fn main() {
                 },
             )
             .unwrap();
+        let view = window.update(cx, |_, _, cx| cx.entity()).unwrap();
+        cx.observe_keystrokes(move |ev, _, cx| {
+            view.update(cx, |view, cx| {
+                view.recent_keystrokes.push(ev.keystroke.clone());
+                cx.notify();
+            })
+        })
+        .detach();
         cx.on_keyboard_layout_change({
             move |cx| {
                 window.update(cx, |_, _, cx| cx.notify()).ok();
