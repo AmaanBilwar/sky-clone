@@ -147,7 +147,10 @@ impl TextInput {
         // self.marked_range = None;
         let prompt = self.content.to_string();
         send_to_llm(prompt);
-
+        self.content = "".into();
+        self.selected_range = 0..0;
+        self.selection_reversed = false;
+        self.marked_range = None;
         cx.notify();
     }
 
