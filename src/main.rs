@@ -1,4 +1,3 @@
-mod llm;
 use gpui::{
     App, Application, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler,
     Entity, EntityInputHandler, FocusHandle, Focusable, GlobalElementId, KeyBinding, Keystroke,
@@ -7,7 +6,6 @@ use gpui::{
     WindowOptions, actions, black, div, fill, hsla, opaque_grey, point, prelude::*, px, relative,
     rgb, rgba, size, white, yellow,
 };
-use llm::send_to_llm;
 use std::ops::Range;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -145,8 +143,6 @@ impl TextInput {
         // self.selected_range = 0..0;
         // self.selection_reversed = false;
         // self.marked_range = None;
-        let prompt = self.content.to_string();
-        send_to_llm(prompt);
         self.content = "".into();
         self.selected_range = 0..0;
         self.selection_reversed = false;
@@ -640,7 +636,7 @@ impl Focusable for InputExample {
 }
 
 impl InputExample {
-    fn on_reset_click(&mut self, _: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_submit_click(&mut self, _: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
         self.recent_keystrokes.clear();
         self.text_input
             .update(cx, |text_input, _cx| text_input.reset());
@@ -663,21 +659,20 @@ impl Render for InputExample {
                     .border_color(black())
                     .flex()
                     .flex_row()
-                    .justify_between()
-                    .child(format!("Keyboard {}", cx.keyboard_layout().name()))
+                    .justify_end()
                     .child(
                         div()
                             .border_1()
                             .border_color(black())
                             .px_2()
                             .bg(yellow())
-                            .child("Reset")
+                            .child("Send")
                             .hover(|style| {
                                 style
                                     .bg(yellow().blend(opaque_grey(0.5, 0.5)))
                                     .cursor_pointer()
                             })
-                            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_reset_click)),
+                            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_submit_click)),
                     ),
             )
             .child(self.text_input.clone())
@@ -716,7 +711,7 @@ fn main() {
                     let text_input = cx.new(|cx| TextInput {
                         focus_handle: cx.focus_handle(),
                         content: "".into(),
-                        placeholder: "Type here...".into(),
+                        placeholder: "Let's begin...".into(),
                         selected_range: 0..0,
                         selection_reversed: false,
                         marked_range: None,
