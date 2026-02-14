@@ -1,14 +1,24 @@
+use gpui::{
+    App, Application, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler,
+    Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, KeyBinding,
+    Keystroke, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
+    Pixels, Point, ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle,
+    Window, WindowBounds, WindowOptions, actions, black, div, fill, hsla, opaque_grey, point,
+    prelude::*, px, relative, rgb, rgba, size, white, yellow,
+};
+use serde::{Deserialize, Serialize};
+use std::io::Read;
 use std::ops::Range;
-
-use gpui::*;
-use unicode_segmentation::*;
-
+use tokio::sync::mpsc;
+use unicode_segmentation::UnicodeSegmentation;
 
 actions!(
     text_input,
     [
+        Enter,
         Backspace,
         Delete,
+        DeleteAll,
         Left,
         Right,
         SelectLeft,
@@ -24,6 +34,34 @@ actions!(
     ]
 );
 
+#[derive(Clone)]
+struct ChatMessage {
+    role: ChatRole,
+    content: SharedString,
+}
+
+#[derive(Clone, Copy)]
+enum ChatRole {
+    User,
+    Assistant,
+    System,
+}
+
+#[derive(Clone)]
+struct SubmitEvent {
+    text: SharedString,
+}
+
+#[derive(Serialize)]
+struct ChatRequest {
+    message: String,
+}
+
+#[derive(Deserialize)]
+struct ChatResponse {
+    response: String,
+}
+
 struct TextInput {
     focus_handle: FocusHandle,
     content: SharedString,
@@ -35,6 +73,8 @@ struct TextInput {
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
 }
+
+impl EventEmitter<SubmitEvent> for TextInput {}
 
 impl TextInput {
     fn left(&mut self, _: &Left, _: &mut Window, cx: &mut Context<Self>) {
@@ -88,6 +128,15 @@ impl TextInput {
         self.replace_text_in_range(None, "", window, cx)
     }
 
+    fn delete_all(&mut self, _: &DeleteAll, window: &mut Window, cx: &mut Context<Self>) {
+        self.move_to(0, cx);
+        if self.selected_range.is_empty() {
+            self.select_to(self.previous_boundary(self.cursor_offset()), cx)
+        }
+        self.select_to(self.content.len(), cx);
+        self.replace_text_in_range(None, "", window, cx);
+    }
+
     fn on_mouse_down(
         &mut self,
         event: &MouseDownEvent,
@@ -113,19 +162,13 @@ impl TextInput {
         }
     }
 
-    fn show_character_palette(
-        &mut self,
-        _: &ShowCharacterPalette,
-        window: &mut Window,
-        _: &mut Context<Self>,
-    ) {
-        window.show_character_palette();
-    }
-
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
             self.replace_text_in_range(None, &text.replace("\n", " "), window, cx);
         }
+    }
+    fn enter(&mut self, _: &Enter, _window: &mut Window, cx: &mut Context<Self>) {
+        self.submit(cx);
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
@@ -147,6 +190,22 @@ impl TextInput {
     fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
         self.selected_range = offset..offset;
         cx.notify()
+    }
+
+    fn submit(&mut self, cx: &mut Context<Self>) {
+        let trimmed = self.content.as_ref().trim();
+        if trimmed.is_empty() {
+            return;
+        }
+
+        cx.emit(SubmitEvent {
+            text: trimmed.to_string().into(),
+        });
+        self.content = "".into();
+        self.selected_range = 0..0;
+        self.selection_reversed = false;
+        self.marked_range = None;
+        cx.notify();
     }
 
     fn cursor_offset(&self) -> usize {
@@ -563,7 +622,9 @@ impl Render for TextInput {
             .key_context("TextInput")
             .track_focus(&self.focus_handle(cx))
             .cursor(CursorStyle::IBeam)
+            .on_action(cx.listener(Self::enter))
             .on_action(cx.listener(Self::backspace))
+            .on_action(cx.listener(Self::delete_all))
             .on_action(cx.listener(Self::delete))
             .on_action(cx.listener(Self::left))
             .on_action(cx.listener(Self::right))
@@ -572,7 +633,6 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::select_all))
             .on_action(cx.listener(Self::home))
             .on_action(cx.listener(Self::end))
-            .on_action(cx.listener(Self::show_character_palette))
             .on_action(cx.listener(Self::paste))
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::copy))
@@ -604,6 +664,9 @@ struct InputExample {
     text_input: Entity<TextInput>,
     recent_keystrokes: Vec<Keystroke>,
     focus_handle: FocusHandle,
+    chat_messages: Vec<ChatMessage>,
+    is_waiting: bool,
+    streaming_message_index: Option<usize>,
 }
 
 impl Focusable for InputExample {
@@ -613,16 +676,168 @@ impl Focusable for InputExample {
 }
 
 impl InputExample {
-    fn on_reset_click(&mut self, _: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_submit_click(&mut self, _: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
         self.recent_keystrokes.clear();
         self.text_input
-            .update(cx, |text_input, _cx| text_input.reset());
+            .update(cx, |text_input, cx| text_input.submit(cx));
         cx.notify();
+    }
+
+    fn submit_message(&mut self, text: SharedString, cx: &mut Context<Self>) {
+        let trimmed = text.as_ref().trim();
+        if trimmed.is_empty() {
+            return;
+        }
+
+        let user_text: SharedString = trimmed.to_string().into();
+        self.chat_messages.push(ChatMessage {
+            role: ChatRole::User,
+            content: user_text.clone(),
+        });
+        self.is_waiting = true;
+        let stream_index = self.chat_messages.len();
+        self.chat_messages.push(ChatMessage {
+            role: ChatRole::Assistant,
+            content: "".into(),
+        });
+        self.streaming_message_index = Some(stream_index);
+        cx.notify();
+
+        let base_url =
+            std::env::var("BACKEND_URL").unwrap_or_else(|_| "http://127.0.0.1:8000".to_string());
+        let chat_url = format!("{base_url}/chat/stream");
+        let request_message = user_text.to_string();
+
+        cx.spawn(
+            move |view: gpui::WeakEntity<InputExample>, cx: &mut gpui::AsyncApp| {
+                let mut cx = cx.clone();
+                let (tx, mut rx) = mpsc::unbounded_channel::<Result<String, String>>();
+
+                cx.background_executor()
+                    .spawn(async move {
+                        let client = reqwest::blocking::Client::new();
+                        let response = client
+                            .post(&chat_url)
+                            .json(&ChatRequest {
+                                message: request_message,
+                            })
+                            .send();
+
+                        match response {
+                            Ok(mut response) => {
+                                let mut buffer = [0u8; 4096];
+                                loop {
+                                    match response.read(&mut buffer) {
+                                        Ok(0) => break,
+                                        Ok(size) => {
+                                            let chunk = String::from_utf8_lossy(&buffer[..size])
+                                                .to_string();
+                                            if tx.send(Ok(chunk)).is_err() {
+                                                break;
+                                            }
+                                        }
+                                        Err(err) => {
+                                            let _ = tx.send(Err(err.to_string()));
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                let _ = tx.send(Err(err.to_string()));
+                            }
+                        }
+                    })
+                    .detach();
+
+                async move {
+                    let mut received_any = false;
+                    let mut stream_error: Option<String> = None;
+
+                    while let Some(result) = rx.recv().await {
+                        match result {
+                            Ok(chunk) => {
+                                received_any = true;
+                                view.update(
+                                    &mut cx,
+                                    |view: &mut InputExample, cx: &mut Context<InputExample>| {
+                                        if let Some(index) = view.streaming_message_index {
+                                            let mut content =
+                                                view.chat_messages[index].content.to_string();
+                                            content.push_str(&chunk);
+                                            view.chat_messages[index].content = content.into();
+                                            cx.notify();
+                                        }
+                                    },
+                                )
+                                .ok();
+                            }
+                            Err(err) => {
+                                stream_error = Some(err);
+                                break;
+                            }
+                        }
+                    }
+
+                    view.update(
+                        &mut cx,
+                        |view: &mut InputExample, cx: &mut Context<InputExample>| {
+                            view.is_waiting = false;
+                            if let Some(index) = view.streaming_message_index {
+                                if let Some(err) = stream_error {
+                                    view.chat_messages[index].content =
+                                        format!("Error: {err}").into();
+                                    view.chat_messages[index].role = ChatRole::System;
+                                } else if !received_any {
+                                    view.chat_messages[index].content = "No response".into();
+                                }
+                            }
+                            view.streaming_message_index = None;
+                            cx.notify();
+                        },
+                    )
+                    .ok();
+                }
+            },
+        )
+        .detach();
+    }
+
+    fn render_message(message: &ChatMessage) -> impl IntoElement {
+        let (bubble_color, label, align_end) = match message.role {
+            ChatRole::User => (rgb(0xdef1ff), "You", true),
+            ChatRole::Assistant => (rgb(0xf3f3f3), "Assistant", false),
+            ChatRole::System => (rgb(0xfff0e6), "System", false),
+        };
+
+        let bubble = div()
+            .border_1()
+            .border_color(black())
+            .bg(bubble_color)
+            .px_2()
+            .py_1()
+            .w(relative(0.75))
+            .whitespace_normal()
+            .child(div().text_size(px(12.)).child(label))
+            .child(
+                div()
+                    .w_full()
+                    .whitespace_normal()
+                    .child(message.content.clone()),
+            );
+
+        if align_end {
+            div().w_full().flex().justify_end().child(bubble)
+        } else {
+            div().w_full().flex().justify_start().child(bubble)
+        }
     }
 }
 
 impl Render for InputExample {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let messages = self.chat_messages.iter().map(Self::render_message);
+
         div()
             .bg(rgb(0xaaaaaa))
             .track_focus(&self.focus_handle(cx))
@@ -636,8 +851,7 @@ impl Render for InputExample {
                     .border_color(black())
                     .flex()
                     .flex_row()
-                    .justify_between()
-                    .child(format!("{}", cx.keyboard_layout().name()))
+                    .justify_end()
                     .child(
                         div()
                             .border_1()
@@ -647,11 +861,25 @@ impl Render for InputExample {
                             .child("Send")
                             .hover(|style| {
                                 style
-                                    .bg(yellow().blend(opaque_grey(0.5, 0.5)))
+                                    .bg(black().blend(opaque_grey(0.5, 0.5)))
                                     .cursor_pointer()
                             })
-                            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_reset_click)),
+                            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_submit_click)),
                     ),
+            )
+            .child(
+                div()
+                    .id("chat_scroll")
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .bg(white())
+                    .border_b_1()
+                    .border_color(black())
+                    .p(px(8.))
+                    .gap_2()
+                    .flex()
+                    .flex_col()
+                    .children(messages),
             )
             .child(self.text_input.clone())
     }
@@ -662,18 +890,21 @@ fn main() {
         let bounds = Bounds::centered(None, size(px(800.0), px(300.0)), cx);
         cx.bind_keys([
             KeyBinding::new("backspace", Backspace, None),
+            KeyBinding::new("ctrl-backspace", DeleteAll, None),
             KeyBinding::new("delete", Delete, None),
             KeyBinding::new("left", Left, None),
             KeyBinding::new("right", Right, None),
             KeyBinding::new("shift-left", SelectLeft, None),
+            KeyBinding::new("ctrl-shift-left", SelectLeft, None),
             KeyBinding::new("shift-right", SelectRight, None),
-            KeyBinding::new("cmd-a", SelectAll, None),
-            KeyBinding::new("cmd-v", Paste, None),
-            KeyBinding::new("cmd-c", Copy, None),
-            KeyBinding::new("cmd-x", Cut, None),
+            KeyBinding::new("ctrl-shift-right", SelectRight, None),
+            KeyBinding::new("ctrl-a", SelectAll, None),
+            KeyBinding::new("ctrl-v", Paste, None),
+            KeyBinding::new("ctrl-c", Copy, None),
+            KeyBinding::new("ctrl-x", Cut, None),
             KeyBinding::new("home", Home, None),
             KeyBinding::new("end", End, None),
-            KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, None),
+            KeyBinding::new("enter", Enter, None),
         ]);
 
         let window = cx
@@ -686,7 +917,7 @@ fn main() {
                     let text_input = cx.new(|cx| TextInput {
                         focus_handle: cx.focus_handle(),
                         content: "".into(),
-                        placeholder: "Type away...".into(),
+                        placeholder: "Let's begin...".into(),
                         selected_range: 0..0,
                         selection_reversed: false,
                         marked_range: None,
@@ -694,10 +925,26 @@ fn main() {
                         last_bounds: None,
                         is_selecting: false,
                     });
-                    cx.new(|cx| InputExample {
-                        text_input,
-                        recent_keystrokes: vec![],
-                        focus_handle: cx.focus_handle(),
+                    cx.new(|cx| {
+                        cx.subscribe(
+                            &text_input,
+                            |view: &mut InputExample,
+                             _input: Entity<TextInput>,
+                             event: &SubmitEvent,
+                             cx: &mut Context<InputExample>| {
+                                view.submit_message(event.text.clone(), cx);
+                            },
+                        )
+                        .detach();
+
+                        InputExample {
+                            text_input,
+                            recent_keystrokes: vec![],
+                            focus_handle: cx.focus_handle(),
+                            chat_messages: vec![],
+                            is_waiting: false,
+                            streaming_message_index: None,
+                        }
                     })
                 },
             )
@@ -712,18 +959,23 @@ fn main() {
         .detach();
         cx.on_keyboard_layout_change({
             move |cx| {
-                window.update(cx, |_, _, cx| cx.notify()).ok();
+                window
+                    .update(cx, |_, _, cx: &mut Context<InputExample>| cx.notify())
+                    .ok();
             }
         })
         .detach();
 
         window
-            .update(cx, |view, window, cx| {
-                window.focus(&view.text_input.focus_handle(cx));
-                cx.activate(true);
-            })
+            .update(
+                cx,
+                |view: &mut InputExample, window: &mut Window, cx: &mut Context<InputExample>| {
+                    window.focus(&view.text_input.focus_handle(cx));
+                    cx.activate(true);
+                },
+            )
             .unwrap();
         cx.on_action(|_: &Quit, cx| cx.quit());
-        cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
+        cx.bind_keys([KeyBinding::new("ctrl-q", Quit, None)]);
     });
 }
